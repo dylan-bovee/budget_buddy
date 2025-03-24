@@ -1,11 +1,15 @@
 from tkinter import *
 from tkinter import ttk 
+from tkinter import Tk
 from services.auth_service import login_user, register_user
 from services.transaction_service import deposit, withdraw, transfer
 from db import cursor
 from models.transaction import Transaction
 from tkinter import messagebox
 from services.transaction_service import search_transactions
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import datetime
 
 def create_main_window():
     window = Tk()
@@ -70,6 +74,8 @@ def open_account_window(user):
     Button(win, text="Transférer", command=lambda: open_transfer_window(user.id)).pack(pady=2)
     Button(win, text="Historique", command=lambda: show_history(user.id)).pack(pady=2)
     Button(win, text="Rechercher Transactions", command=lambda: open_search_window(user.id)).pack(pady=2)
+    Button(win, text="📊 Tableau de Bord", command=lambda: open_dashboard(user.id)).pack(pady=2)
+
 
 
 def open_amount_window(user_id, action):
@@ -191,3 +197,57 @@ def open_search_window(user_id):
 
     # Bouton de recherche
     Button(win, text="Rechercher", command=search).grid(row=5, column=0, columnspan=2, pady=5)
+def open_dashboard(user_id):
+    win = Toplevel()
+    win.title("Tableau de Bord")
+
+    # Récupérer le solde actuel
+    cursor.execute("SELECT solde FROM user WHERE id = %s", (user_id,))
+    solde = cursor.fetchone()[0]
+
+    # Récupérer les transactions du dernier mois
+    today = datetime.date.today()
+    first_day = today.replace(day=1)
+    cursor.execute("""
+        SELECT type_transaction, SUM(amount) 
+        FROM transaction 
+        WHERE user_id = %s AND date >= %s 
+        GROUP BY type_transaction
+    """, (user_id, first_day))
+    
+    transactions = cursor.fetchall()
+    depenses = {t[0]: t[1] for t in transactions}
+
+    # Affichage des informations
+    Label(win, text=f"Solde Actuel : {solde:.2f} €", font=("Arial", 14, "bold")).pack(pady=10)
+    
+    # Vérifier si découvert
+    if solde < 0:
+        messagebox.showwarning("Attention !", "Vous êtes en découvert !")
+
+    # Tableau des dépenses
+    frame = Frame(win)
+    frame.pack(pady=10)
+    
+    tree = ttk.Treeview(frame, columns=("Type", "Montant"), show="headings")
+    tree.heading("Type", text="Type de transaction")
+    tree.heading("Montant", text="Montant (€)")
+    
+    for type_transaction, amount in depenses.items():
+        tree.insert("", "end", values=(type_transaction, f"{amount:.2f} €"))
+    
+    tree.pack()
+
+    #Vérifier si on a des données pour éviter une erreur
+    if depenses:
+        # Création du graphique
+        fig, ax = plt.subplots(figsize=(5, 5))  # Taille du graphique
+        ax.pie(depenses.values(), labels=depenses.keys(), autopct='%1.1f%%', startangle=90)
+        ax.set_title("Répartition des Dépenses")
+
+        # Intégrer Matplotlib à Tkinter
+        canvas = FigureCanvasTkAgg(fig, master=win)
+        canvas.draw()
+        canvas.get_tk_widget().pack(pady=10)
+
+    Button(win, text="Fermer", command=win.destroy).pack(pady=10)
