@@ -2,7 +2,9 @@ from tkinter import *
 import tkinter as tk
 from tkinter import messagebox
 import mysql.connector
-import uuid
+import bcrypt
+import re
+
 
 # Connexion à la base de données MySQL
 conn = mysql.connector.connect(
@@ -40,22 +42,57 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS transaction_history (
                     FOREIGN KEY (user_id) REFERENCES user(id))''')
 conn.commit()
 
-# Fonction pour enregistrer un nouvel utilisateur
-def enregistrer_utilisateur(email, mot_de_passe):
+#Fonction pour valider le mot de passe selon les critères
+def valider_mot_de_passe(mot_de_passe):
+    # Vérification des critères
+    if len(mot_de_passe) < 10:
+        return False, "Le mot de passe doit contenir au moins 10 caractères."
+    if not re.search("[a-z]", mot_de_passe):  # Au moins une minuscule
+        return False, "Le mot de passe doit contenir au moins une minuscule."
+    if not re.search("[A-Z]", mot_de_passe):  # Au moins une majuscule
+        return False, "Le mot de passe doit contenir au moins une majuscule."
+    if not re.search("[0-9]", mot_de_passe):  # Au moins un chiffre
+        return False, "Le mot de passe doit contenir au moins un chiffre."
+    if not re.search("[@#$%^&+=]", mot_de_passe):  # Au moins un caractère spécial
+        return False, "Le mot de passe doit contenir au moins un caractère spécial (@#$%^&+=)."
+    return True, ""
+
+# Fonction de hachage du mot de passe avec bcrypt
+def hacher_mot_de_passe(mot_de_passe):
+    # Générer un salt
+    salt = bcrypt.gensalt()
+    # Hacher le mot de passe
+    mot_de_passe_hache = bcrypt.hashpw(mot_de_passe.encode('utf-8'), salt)
+    return mot_de_passe_hache
+
+# Fonction pour enregistrer un nouvel utilisateur (ajout des champs surname et name)
+def enregistrer_utilisateur(name, surname, email, mot_de_passe):
+    # Vérification de la validité du mot de passe
+    valid, message = valider_mot_de_passe(mot_de_passe)
+    if not valid:
+        messagebox.showerror("Erreur", message)
+        return
+    
+    # Hachage du mot de passe
+    mot_de_passe_hache = hacher_mot_de_passe(mot_de_passe)
+    
     try:
-        cursor.execute("INSERT INTO user (email, password) VALUES (%s, %s)", (email, mot_de_passe))
+        cursor.execute("INSERT INTO user (name, surname, email, password) VALUES (%s, %s, %s, %s)", (name, surname, email, mot_de_passe_hache))
         conn.commit()
+        messagebox.showinfo("Succès", "Inscription réussie !")
     except mysql.connector.IntegrityError:
-        return False
-    return True
+        messagebox.showerror("Erreur", "Cet email est déjà utilisé.")
 
 # Fonction de connexion
 def connecter_utilisateur(email, mot_de_passe):
     cursor.execute("SELECT id, password, solde FROM user WHERE email = %s", (email,))
     utilisateur = cursor.fetchone()
-    
-    if utilisateur and utilisateur[1] == mot_de_passe:
-        return utilisateur  # Retourner id, password, solde
+
+    if utilisateur:
+        mot_de_passe_stocke = utilisateur[1]
+        # Vérification du mot de passe en comparant le mot de passe fourni avec le mot de passe haché
+        if bcrypt.checkpw(mot_de_passe.encode('utf-8'), mot_de_passe_stocke.encode('utf-8')):
+            return utilisateur  # Retourner id, password, solde
     return None
 
 # Fonction pour ouvrir la fenêtre du compte
@@ -89,6 +126,47 @@ def verifier_connexion():
         ouvrir_compte(utilisateur)
     else:
         label_erreur.config(text="Identifiants incorrects", fg="red")
+
+# Fonction d'inscription utilisateur avec ajout des champs name et surname
+def afficher_formulaire_inscription():
+    def inscrire():
+        name = entry_name.get()
+        surname = entry_surname.get()
+        email = entry_email.get()
+        mot_de_passe = entry_motdepasse.get()
+        mot_de_passe_confirmation = entry_motdepasse_confirmation.get()
+
+        if mot_de_passe != mot_de_passe_confirmation:
+            messagebox.showerror("Erreur", "Les mots de passe ne correspondent pas.")
+            return
+
+        enregistrer_utilisateur(name, surname, email, mot_de_passe)
+
+    fenetre_inscription = Toplevel(fenetre)
+    fenetre_inscription.title("Inscription")
+    fenetre_inscription.minsize(400, 300)
+
+    Label(fenetre_inscription, text="Prénom:").pack(pady=10)
+    entry_name = Entry(fenetre_inscription, width=30)
+    entry_name.pack(pady=5)
+
+    Label(fenetre_inscription, text="Nom de famille:").pack(pady=10)
+    entry_surname = Entry(fenetre_inscription, width=30)
+    entry_surname.pack(pady=5)
+
+    Label(fenetre_inscription, text="Email:").pack(pady=10)
+    entry_email = Entry(fenetre_inscription, width=30)
+    entry_email.pack(pady=5)
+
+    Label(fenetre_inscription, text="Mot de passe:").pack(pady=10)
+    entry_motdepasse = Entry(fenetre_inscription, width=30, show="*")
+    entry_motdepasse.pack(pady=5)
+
+    Label(fenetre_inscription, text="Confirmer le mot de passe:").pack(pady=10)
+    entry_motdepasse_confirmation = Entry(fenetre_inscription, width=30, show="*")
+    entry_motdepasse_confirmation.pack(pady=5)
+
+    Button(fenetre_inscription, text="S'inscrire", command=inscrire).pack(pady=20)
 
 # Fonction de dépôt
 def deposer_fenetre(user_id):
@@ -275,7 +353,7 @@ def afficher_historique(user_id):
 # Interface graphique principale
 fenetre = Tk()
 fenetre.title("La Banque")
-fenetre.minsize(400, 200)
+fenetre.minsize(400, 250)
 
 cadre = Frame(fenetre, padx=20, pady=20)
 cadre.pack()
@@ -300,5 +378,9 @@ label_erreur.grid(row=3, columnspan=2)
 
 button_connexion = Button(cadre, text="Se connecter", command=verifier_connexion)
 button_connexion.grid(row=4, columnspan=2, pady=20)
+
+# Bouton pour ouvrir le formulaire d'inscription
+button_inscription = Button(cadre, text="S'inscrire", command=afficher_formulaire_inscription)
+button_inscription.grid(row=5, columnspan=2, pady=10)
 
 fenetre.mainloop()
